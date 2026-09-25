@@ -34,87 +34,111 @@ st.header("Betting Rules Assistant")
 # =========================================================
 
 DOCUMENTS_FOLDER = "documents"
-FAISS_FOLDER = "faiss_index"
 
 
 # =========================================================
 # 4. READ ALL PDF FILES
 # =========================================================
 
-documents_text = ""
+@st.cache_data
+def load_documents():
 
-pdf_files = [
-    file_name
-    for file_name in os.listdir(DOCUMENTS_FOLDER)
-    if file_name.lower().endswith(".pdf")
-]
+    if not os.path.exists(DOCUMENTS_FOLDER):
+        return None, "The documents folder was not found."
+
+    pdf_files = [
+        file_name
+        for file_name in os.listdir(DOCUMENTS_FOLDER)
+        if file_name.lower().endswith(".pdf")
+    ]
+
+    if not pdf_files:
+        return None, "No PDF documents were found in the documents folder."
+
+    documents_text = ""
+
+    for pdf_file in pdf_files:
+
+        pdf_path = os.path.join(
+            DOCUMENTS_FOLDER,
+            pdf_file
+        )
+
+        with pdfplumber.open(pdf_path) as pdf:
+
+            for page_number, page in enumerate(
+                pdf.pages,
+                start=1
+            ):
+
+                page_text = page.extract_text() or ""
+
+                documents_text += (
+                    f"\n\n"
+                    f"--- SOURCE: {pdf_file} | PAGE: {page_number} ---\n\n"
+                    f"{page_text}"
+                )
+
+    return documents_text, None
 
 
-if not pdf_files:
-    st.error("No PDF documents were found in the documents folder.")
+documents_text, error_message = load_documents()
+
+
+if error_message:
+    st.error(error_message)
     st.stop()
-
-
-for pdf_file in pdf_files:
-
-    pdf_path = os.path.join(DOCUMENTS_FOLDER, pdf_file)
-
-    with pdfplumber.open(pdf_path) as pdf:
-
-        for page_number, page in enumerate(pdf.pages, start=1):
-
-            page_text = page.extract_text() or ""
-
-            documents_text += (
-                f"\n\n"
-                f"--- SOURCE: {pdf_file} | PAGE: {page_number} ---\n\n"
-                f"{page_text}"
-            )
 
 
 # =========================================================
 # 5. SPLIT TEXT INTO CHUNKS
 # =========================================================
 
-text_splitter = RecursiveCharacterTextSplitter(
-    separators=["\n\n", "\n", ".", ",", " ", ""],
-    chunk_size=1000,
-    chunk_overlap=200
-)
+@st.cache_data
+def create_chunks(documents_text):
 
-chunks = text_splitter.split_text(documents_text)
+    text_splitter = RecursiveCharacterTextSplitter(
+        separators=["\n\n", "\n", ".", ",", " ", ""],
+        chunk_size=1000,
+        chunk_overlap=200
+    )
+
+    return text_splitter.split_text(documents_text)
+
+
+chunks = create_chunks(documents_text)
 
 
 # =========================================================
 # 6. GENERATE EMBEDDINGS
 # =========================================================
 
-embeddings = OpenAIEmbeddings(
-    model="text-embedding-3-small",
-    openai_api_key=MY_OPENAI_KEY
-)
+@st.cache_resource
+def create_embeddings():
+
+    return OpenAIEmbeddings(
+        model="text-embedding-3-small",
+        openai_api_key=MY_OPENAI_KEY
+    )
+
+
+embeddings = create_embeddings()
 
 
 # =========================================================
-# 7. CREATE / LOAD FAISS DATABASE
+# 7. CREATE FAISS DATABASE
 # =========================================================
 
-if not os.path.exists(FAISS_FOLDER):
+@st.cache_resource
+def create_vector_store(chunks):
 
-    vector_store = FAISS.from_texts(
+    return FAISS.from_texts(
         chunks,
         embeddings
     )
 
-    vector_store.save_local(FAISS_FOLDER)
 
-else:
-
-    vector_store = FAISS.load_local(
-        FAISS_FOLDER,
-        embeddings,
-        allow_dangerous_deserialization=True
-    )
+vector_store = create_vector_store(chunks)
 
 
 # =========================================================
@@ -134,7 +158,8 @@ retriever = vector_store.as_retriever(
 def format_docs(docs):
 
     return "\n\n".join(
-        [doc.page_content for doc in docs]
+        doc.page_content
+        for doc in docs
     )
 
 
@@ -142,12 +167,18 @@ def format_docs(docs):
 # 10. OPENAI MODEL
 # =========================================================
 
-llm = ChatOpenAI(
-    model="gpt-4o-mini",
-    temperature=0.2,
-    max_tokens=1000,
-    openai_api_key=MY_OPENAI_KEY
-)
+@st.cache_resource
+def create_llm():
+
+    return ChatOpenAI(
+        model="gpt-4o-mini",
+        temperature=0.2,
+        max_tokens=1000,
+        openai_api_key=MY_OPENAI_KEY
+    )
+
+
+llm = create_llm()
 
 
 # =========================================================
